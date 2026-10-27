@@ -1,0 +1,35 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${DEV_DB_NAME:-household_planner_dev}
+      POSTGRES_USER: ${DEV_DB_USER:-household_dev}
+      POSTGRES_PASSWORD: ${DEV_DB_PASSWORD:-household_dev_local_only}
+    ports:
+      - "127.0.0.1:${DEV_DB_PORT:-5433}:5432"
+    volumes:
+      - dev-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  mailpit:
+    image: axllent/mailpit:v1.27
+    ports:
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
+
+  migrate:
+    image: flyway/flyway:13.7.0
+    command: ["-connectRetries=30", "-url=jdbc:postgresql://db:5432/${DEV_DB_NAME:-household_planner_dev}", "-user=${DEV_DB_USER:-household_dev}", "-password=${DEV_DB_PASSWORD:-household_dev_local_only}", "-locations=filesystem:/flyway/sql", "migrate"]
+    volumes:
+      - ./backend/src/main/resources/db/migration:/flyway/sql:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+volumes:
+  dev-postgres-data:

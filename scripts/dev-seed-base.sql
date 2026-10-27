@@ -1,0 +1,23 @@
+INSERT INTO household (id, name, timezone)
+VALUES ('10000000-0000-4000-8000-000000000001', 'Тестовый дом', 'Asia/Yekaterinburg')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO app_user (id, display_name, email) VALUES
+  ('20000000-0000-4000-8000-000000000001', 'Алексей', 'alexey@example.test'),
+  ('20000000-0000-4000-8000-000000000002', 'Мария', 'maria@example.test'),
+  ('20000000-0000-4000-8000-000000000003', 'Демо участник', 'demo@example.test')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO membership (id, household_id, user_id, role) VALUES
+  ('30000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000001', '20000000-0000-4000-8000-000000000001', 'OWNER'),
+  ('30000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000001', '20000000-0000-4000-8000-000000000002', 'MEMBER'),
+  ('30000000-0000-4000-8000-000000000003', '10000000-0000-4000-8000-000000000001', '20000000-0000-4000-8000-000000000003', 'MEMBER')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO work_schedule (id, membership_id, pattern_type, work_days, shift_start, shift_end, valid_from)
+VALUES ('40000000-0000-4000-8000-000000000001', '30000000-0000-4000-8000-000000000001', 'WEEK_5_2', '[1,2,3,4,5]'::jsonb, '09:00', '18:00', CURRENT_DATE)
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO work_schedule (id, membership_id, pattern_type, anchor_date, work_days_per_cycle, rest_days_per_cycle, shift_start, shift_end, valid_from)
+VALUES ('40000000-0000-4000-8000-000000000002', '30000000-0000-4000-8000-000000000002', 'CYCLE_2_2', CURRENT_DATE, 2, 2, '08:00', '20:00', CURRENT_DATE)
+ON CONFLICT (id) DO NOTHING;

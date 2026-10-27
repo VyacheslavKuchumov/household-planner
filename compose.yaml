@@ -1,0 +1,133 @@
+services:
+  traefik:
+    image: traefik:v3.7.16
+    restart: unless-stopped
+    command:
+      - --api.dashboard=false
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=household-edge
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --certificatesresolvers.le.acme.email=${ACME_EMAIL:?Set ACME_EMAIL in .env}
+      - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.le.acme.httpchallenge=true
+      - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-certs:/letsencrypt
+    networks:
+      - edge
+
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-household_planner}
+      POSTGRES_USER: ${POSTGRES_USER:-household}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    image: flyway/flyway:13.7.0
+    command: ["-connectRetries=30", "-url=jdbc:postgresql://db:5432/${POSTGRES_DB:-household_planner}", "-user=${POSTGRES_USER:-household}", "-password=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}", "-locations=filesystem:/flyway/sql", "migrate"]
+    volumes:
+      - ./backend/src/main/resources/db/migration:/flyway/sql:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - data
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    environment:
+      PORT: 8080
+      APP_PUBLIC_URL: ${APP_PUBLIC_URL:-https://${APP_DOMAIN}}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://${APP_DOMAIN}}
+      COOKIE_SECURE: "true"
+      COOKIE_SAME_SITE: ${COOKIE_SAME_SITE:-Lax}
+      JWT_PRIVATE_KEY_FILE: /run/secrets/jwt_private
+      JWT_PUBLIC_KEY_FILE: /run/secrets/jwt_public
+      JWT_KEY_ID: ${JWT_KEY_ID:-primary}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-admin@localhost.invalid}
+      SMTP_HOST: ${SMTP_HOST:?Set SMTP_HOST in .env}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_STARTTLS: ${SMTP_STARTTLS:-true}
+      MAIL_FROM: ${MAIL_FROM:?Set MAIL_FROM in .env}
+      DB_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:-household_planner}
+      DB_USER: ${POSTGRES_USER:-household}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - edge
+      - data
+    tmpfs:
+      - /run/household
+    secrets:
+      - jwt_private
+      - jwt_public
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=household-edge
+      - traefik.http.routers.household-api.rule=Host(`${APP_DOMAIN:?Set APP_DOMAIN in .env}`) && PathPrefix(`/api`)
+      - traefik.http.routers.household-api.entrypoints=websecure
+      - traefik.http.routers.household-api.tls.certresolver=le
+      - traefik.http.routers.household-api.priority=100
+      - traefik.http.services.household-api.loadbalancer.server.port=8080
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - api
+    networks:
+      - edge
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=household-edge
+      - traefik.http.routers.household-web.rule=Host(`${APP_DOMAIN:?Set APP_DOMAIN in .env}`)
+      - traefik.http.routers.household-web.entrypoints=websecure
+      - traefik.http.routers.household-web.tls.certresolver=le
+      - traefik.http.routers.household-web.priority=1
+      - traefik.http.services.household-web.loadbalancer.server.port=80
+
+networks:
+  edge:
+    name: household-edge
+  data:
+    name: household-data
+    internal: true
+
+volumes:
+  postgres-data:
+  traefik-certs:
+
+secrets:
+  jwt_private:
+    file: ./.local/secrets/jwt-private.pem
+  jwt_public:
+    file: ./.local/secrets/jwt-public.pem
